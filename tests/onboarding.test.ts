@@ -207,40 +207,52 @@ describe("guided GitHub sign-in", () => {
     expect(cli.login).not.toHaveBeenCalled();
     await login.dispose();
   });
-  it("exposes only the one-time code, then completes after browser confirmation", async () => {
-    const cli = commands();
-    cli.token = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("not logged in"))
-      .mockResolvedValueOnce("private-token");
-    let finish: (() => void) | undefined;
-    cli.login = vi.fn(async (_signal, output) => {
-      output("! First copy your one-");
-      output("time code: ABCD-1234\nprivate-token-not-for-ui");
-      await new Promise<void>((resolve) => {
-        finish = resolve;
+  it.each([
+    [
+      "! First copy your one-",
+      "time code: ABCD-1234\nprivate-token-not-for-ui",
+    ],
+    [
+      "! One-time code (ABCD-",
+      "1234) copied to clipboard\nprivate-token-not-for-ui",
+    ],
+  ])(
+    "exposes the device code from gh output, then completes after confirmation",
+    async (first, second) => {
+      const cli = commands();
+      cli.token = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("not logged in"))
+        .mockResolvedValueOnce("private-token");
+      let finish: (() => void) | undefined;
+      cli.login = vi.fn(async (_signal, output) => {
+        output(first);
+        output(second);
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
       });
-    });
-    const save = vi.fn(async (_token: string) => {});
-    const login = new GitHubLogin(
-      save,
-      () => {},
-      new AbortController().signal,
-      cli,
-      async () => ({}),
-    );
-    await login.begin();
-    await vi.waitFor(() => expect(login.status().phase).toBe("waiting"));
-    expect(login.status()).toMatchObject({
-      code: "ABCD-1234",
-      url: "https://github.com/login/device",
-    });
-    expect(JSON.stringify(login.status())).not.toContain("private-token");
-    finish!();
-    await vi.waitFor(() => expect(login.status().phase).toBe("connected"));
-    expect(login.status().code).toBeNull();
-    await login.dispose();
-  });
+      const save = vi.fn(async (_token: string) => {});
+      const login = new GitHubLogin(
+        save,
+        () => {},
+        new AbortController().signal,
+        cli,
+        async () => ({}),
+      );
+      await login.begin();
+      await vi.waitFor(() => expect(login.status().phase).toBe("waiting"));
+      expect(login.status()).toMatchObject({
+        code: "ABCD-1234",
+        url: "https://github.com/login/device",
+      });
+      expect(JSON.stringify(login.status())).not.toContain("private-token");
+      finish!();
+      await vi.waitFor(() => expect(login.status().phase).toBe("connected"));
+      expect(login.status().code).toBeNull();
+      await login.dispose();
+    },
+  );
   it("cancels a pending device login without saving a credential", async () => {
     const cli = commands();
     cli.token = vi.fn(async () => {

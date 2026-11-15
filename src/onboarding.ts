@@ -210,6 +210,13 @@ export interface GhCommands {
   available(signal: AbortSignal): Promise<boolean>;
   login(signal: AbortSignal, output: (text: string) => void): Promise<void>;
 }
+export function deviceCodeFromGhOutput(output: string): string | null {
+  return (
+    /one-time code(?:\s*:\s*|\s*\(\s*)([A-Z0-9]{4}-[A-Z0-9]{4})/i.exec(
+      output,
+    )?.[1] ?? null
+  );
+}
 export const ghCommands: GhCommands = {
   async available(signal) {
     try {
@@ -378,9 +385,7 @@ export class GitHubLogin {
           if (signal.aborted) return;
           // CLI output never leaves this process. Only a one-time device code is exposed.
           tail = (tail + text).slice(-8192);
-          const code = /one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})/i.exec(
-            tail,
-          )?.[1];
+          const code = deviceCodeFromGhOutput(tail);
           if (code)
             this.update({
               phase: "waiting",

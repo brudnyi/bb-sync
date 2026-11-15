@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { ghCommands } from "../src/onboarding";
+import { deviceCodeFromGhOutput, ghCommands } from "../src/onboarding";
 
 it.skipIf(process.env.BB_SYNC_LIVE_GH !== "1")(
   "obtains a real GitHub device code and cancels without signing in",
@@ -26,7 +26,7 @@ it.skipIf(process.env.BB_SYNC_LIVE_GH !== "1")(
       await ghCommands
         .login(controller.signal, (text) => {
           tail = (tail + text).slice(-8192);
-          if (/one-time code:\s*[A-Z0-9]{4}-[A-Z0-9]{4}/i.test(tail)) {
+          if (deviceCodeFromGhOutput(tail)) {
             received = true;
             controller.abort();
           }
