@@ -1,0 +1,54 @@
+{
+  "name": "bb-plugin-bb-sync",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "bb": ">=0.49",
+    "bbPluginSdk": ">=0.6.132"
+  },
+  "bb": {
+    "name": "bb-sync",
+    "description": "Keep your BB theme, shortcuts, and interface preferences in sync across laptops through GitHub.",
+    "branding": {
+      "icon": "RefreshCw"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "skills": [
+      "skills"
+    ]
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@get-bb/plugin-sdk": "0.6.132",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "jsdom": "^26.1.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.7.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.12"
+  },
+  "description": "Two-way sync of BB preferences through a private GitHub repository.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/brudnyi/bb-sync.git"
+  },
+  "author": "brudnyi",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "build": "bb plugin build",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build"
+  }
+}
