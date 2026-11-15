@@ -93,7 +93,7 @@ function Preferences({
 function AnotherLaptop({ repository }: { repository: string }) {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
-  const instruction = `Подключи этот ноутбук к bb-sync:\n1. Установи плагин: bb plugin install git:https://github.com/brudnyi/bb-sync.git@main\n2. Открой bb-sync и нажми «Подключить GitHub».\n3. Выбери существующее приватное хранилище ${repository}.\n4. Нажми «Использовать настройки из GitHub».\nНе копируй токены между ноутбуками — на каждом используется свой вход в GitHub.`;
+  const instruction = `Подключи этот ноутбук к Sync:\n1. Установи плагин: bb plugin install git:https://github.com/brudnyi/bb-sync.git@main\n2. Открой Sync и нажми «Подключить GitHub».\n3. Выбери существующее приватное хранилище ${repository}.\n4. Нажми «Использовать настройки из GitHub».\nНе копируй токены между ноутбуками — на каждом используется свой вход в GitHub.`;
   return (
     <details className="border-t border-border pt-5">
       <summary className="cursor-pointer text-sm font-medium">
@@ -101,7 +101,7 @@ function AnotherLaptop({ repository }: { repository: string }) {
       </summary>
       <div className="mt-4 space-y-3 text-sm">
         <p>
-          Установи bb-sync на другом ноутбуке, подключи GitHub и выбери{" "}
+          Установи Sync на другом ноутбуке, подключи GitHub и выбери{" "}
           <strong className="break-all">{repository}</strong>. Затем примени
           настройки из GitHub.
         </p>
@@ -244,16 +244,21 @@ function SyncPage() {
         <header className="flex items-center gap-3">
           <svg
             aria-hidden="true"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
+            width="26"
+            height="26"
+            viewBox="0 0 32 32"
             fill="none"
             stroke="currentColor"
-            strokeWidth="1.6"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
           >
-            <path d="M20 7a9 9 0 0 0-15-2L2 8m0-5v5h5M4 17a9 9 0 0 0 15 2l3-3m0 5v-5h-5" />
+            <rect x="2" y="11" width="10" height="8" rx="1.5" />
+            <path d="M7 19v2M1 21h12" />
+            <rect x="20" y="11" width="10" height="8" rx="1.5" />
+            <path d="M25 19v2M19 21h12M9 6h14l-3-3M23 6l-3 3M23 26H9l3-3M9 26l3 3" />
           </svg>
-          <h1 className="text-lg font-semibold tracking-tight">bb-sync</h1>
+          <h1 className="text-lg font-semibold tracking-tight">Sync</h1>
         </header>
         <Failure
           message={error}
@@ -467,8 +472,8 @@ export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "sync",
     path: "sync",
-    title: "bb-sync",
-    icon: "RefreshCw",
+    title: "Sync",
+    icon: "bb-sync/devices",
     component: SyncPage,
   });
   app.slots.settingsSection({

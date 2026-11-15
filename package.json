@@ -1,16 +1,19 @@
 {
   "name": "bb-plugin-bb-sync",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "engines": {
     "bb": ">=0.49",
     "bbPluginSdk": ">=0.6.132"
   },
   "bb": {
-    "name": "bb-sync",
-    "description": "Keep your BB theme, shortcuts, and interface preferences in sync across laptops through GitHub.",
+    "name": "Sync",
+    "description": "Keep your BB theme, shortcuts, and interface preferences aligned across laptops.",
     "branding": {
-      "icon": "RefreshCw"
+      "icon": "./assets/sync.svg",
+      "experimental_icons": {
+        "devices": "./assets/sync.svg"
+      }
     },
     "server": "./server.ts",
     "app": "./app.tsx",

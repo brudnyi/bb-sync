@@ -1,4 +1,4 @@
-# bb-sync
+# Sync
 
 Two-way sync of BB themes, keyboard shortcuts, and selected interface preferences through a **private GitHub repository**. No Git checkout, external database, or additional service.
 
@@ -10,11 +10,11 @@ Requires BB 0.49.0 or newer and plugin SDK 0.6.132 or newer. Each independent BB
 bb plugin install git:https://github.com/brudnyi/bb-sync.git@main
 ```
 
-Open **Settings → Installed plugins → bb-sync**. The **bb-sync** sidebar page shows status, conflicts, and the last local snapshot.
+Open **Settings → Installed plugins → Sync**. The **Sync** sidebar page shows status, conflicts, and the last local snapshot.
 
 ## Connect your laptops
 
-Open **bb-sync** from the sidebar. All everyday setup happens on this page; no token copying, terminal commands, or manual repository creation is needed when GitHub CLI is already installed.
+Open **Sync** from the sidebar. All everyday setup happens on this page; no token copying, terminal commands, or manual repository creation is needed when GitHub CLI is already installed.
 
 1. Click **Подключить GitHub**. BB reuses the GitHub CLI account already signed in on the computer running the BB server. If sign-in is needed, the plugin shows a one-time code and a button to open GitHub on your viewing device. Confirm in the browser; the wizard continues automatically. An expired CLI credential starts a fresh sign-in.
 2. Choose the recommended **username/bb-sync-settings**, or choose another writable private repository from the list. The recommended repository is created privately and initialized automatically if absent. Existing empty repositories are checked and initialized with a README before use. Choose which preference groups to transfer.
@@ -44,9 +44,9 @@ The plugin keeps the last shared settings locally. If one laptop changes the the
 
 GitHub updates use the previous file SHA. Concurrent writes are refetched and merged, with at most three attempts per run. Network errors retain the local edits and the last shared baseline. Automatic remote retries back off up to 15 minutes. Deleting a previously synchronized file is an error; restore it from GitHub history instead of using deletion as a reset.
 
-Before applying settings locally, bb-sync saves the original values and a durable journal. A restart resumes unfinished application; a third local edit is never silently overwritten during recovery. The last snapshot can be restored locally; restoration pauses automatic sync and leaves GitHub untouched. Re-enabling sync can publish the restored values as deliberate edits.
+Before applying settings locally, Sync saves the original values and a durable journal. A restart resumes unfinished application; a third local edit is never silently overwritten during recovery. The last snapshot can be restored locally; restoration pauses automatic sync and leaves GitHub untouched. Re-enabling sync can publish the restored values as deliberate edits.
 
-BB has no transaction spanning all its settings APIs. bb-sync preflights the target, checks for local edits between writes, verifies the result, and keeps the journal on partial failure. A network request that succeeds but loses its response is reconciled on the next attempt.
+BB has no transaction spanning all its settings APIs. Sync preflights the target, checks for local edits between writes, verifies the result, and keeps the journal on partial failure. A network request that succeeds but loses its response is reconciled on the next attempt.
 
 Unknown fields and fields from disabled groups remain in GitHub and appear in status without being applied locally. The plugin does not serialize BB's entire configuration or validate it against a frozen copy of BB's general-settings schema. The versioned file format is intentionally strict. Settings documents are limited to 96 KiB / 1500 fields.
 

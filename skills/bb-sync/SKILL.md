@@ -6,7 +6,7 @@ description: Inspect or run bb-sync preference synchronization through a private
 
 Use `bb sync status --json` to inspect configuration, sync state, first-transfer review, conflicts, unsupported fields, and snapshot availability. `bb sync now --json` explicitly performs one two-way sync even when automatic sync is off.
 
-For setup, direct users to the bb-sync sidebar page: Connect GitHub → choose/create private storage → preview and confirm the first transfer. Guided sign-in reuses the GitHub CLI account on the server computer or shows a device code. Users never need to send a token in chat. If GitHub CLI is absent, the wizard offers its installation link; no alternate auth mode is silently attempted.
+For setup, direct users to the Sync sidebar page: Connect GitHub → choose/create private storage → preview and confirm the first transfer. Guided sign-in reuses the GitHub CLI account on the server computer or shows a device code. Users never need to send a token in chat. If GitHub CLI is absent, the wizard offers its installation link; no alternate auth mode is silently attempted.
 
 RPC `setup_load`, `auth_start`, `auth_status`, `auth_cancel`, `repositories`, `setup_prepare`, `preview`, and `setup_finish` power this workflow. `setup_prepare` may create/initialize a private repository; use only for the user's requested setup. `setup_finish` requires the exact current preview ID and choices. Never resolve conflicting values without the user's instructions. Never delete a remote file or clear the baseline to bypass a conflict.
 

@@ -1,6 +1,6 @@
 ## Set up from one page
 
-Open bb-sync, connect GitHub, and choose where to keep your preferences. The plugin reuses your GitHub CLI sign-in or shows a one-time code for browser sign-in. It can create and initialize a private settings repository for you.
+Open Sync, connect GitHub, and choose where to keep your preferences. The plugin reuses your GitHub CLI sign-in or shows a one-time code for browser sign-in. It can create and initialize a private settings repository for you.
 
 On the next laptop, choose the same repository and apply the GitHub settings in one confirmed action, or compare differences first. Automatic sync starts after the first successful transfer.
 
