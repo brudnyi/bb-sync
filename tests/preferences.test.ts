@@ -102,6 +102,7 @@ describe("BB SDK preference adapter", () => {
       appearance: true,
       keyboard: true,
       interface: true,
+      plugins: false,
     });
     const snapshot = await adapter.capture();
     expect(snapshot["general/showKeyboardHints"]).toBe(true);
@@ -114,6 +115,7 @@ describe("BB SDK preference adapter", () => {
       appearance: false,
       keyboard: false,
       interface: true,
+      plugins: false,
     });
     const before = await adapter.capture();
     x.config.generalSettings.futureSetting = "new local value";
@@ -137,6 +139,7 @@ describe("BB SDK preference adapter", () => {
       appearance: false,
       keyboard: true,
       interface: false,
+      plugins: false,
     });
     const before = await adapter.capture();
     const target: Snapshot = { ...before };
@@ -152,6 +155,7 @@ describe("BB SDK preference adapter", () => {
       appearance: true,
       keyboard: false,
       interface: false,
+      plugins: false,
     });
     const before = await adapter.capture();
     await expect(
@@ -172,6 +176,7 @@ describe("BB SDK preference adapter", () => {
       appearance: true,
       keyboard: false,
       interface: false,
+      plugins: false,
     });
     const before = await adapter.capture();
     x.config.appearance.themeId = "third-theme";
@@ -186,6 +191,7 @@ describe("BB SDK preference adapter", () => {
       appearance: true,
       keyboard: false,
       interface: false,
+      plugins: false,
     });
     const before = await adapter.capture();
     // Another window changes the theme while GitHub changes only the favicon.
@@ -205,6 +211,7 @@ describe("BB SDK preference adapter", () => {
       appearance: false,
       keyboard: false,
       interface: true,
+      plugins: false,
     });
     const before = await adapter.capture();
     await adapter.apply(
@@ -225,6 +232,7 @@ describe("BB SDK preference adapter", () => {
       appearance: false,
       keyboard: true,
       interface: false,
+      plugins: false,
     });
     await adapter.capture();
     expect(adapter.supports("keyboard/new.unknown/all")).toBe(false);
@@ -241,7 +249,7 @@ describe("BB SDK preference adapter", () => {
       controller = new AbortController();
     const adapter = new BbPreferences(
       x.sdk,
-      { appearance: true, keyboard: false, interface: false },
+      { appearance: true, keyboard: false, interface: false, plugins: false },
       controller.signal,
     );
     const before = await adapter.capture();

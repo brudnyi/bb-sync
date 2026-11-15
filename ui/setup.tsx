@@ -1,5 +1,5 @@
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
 import type { PublicStatus, rpcContract, SetupState } from "../server";
 import type { Preview } from "../src/engine";
@@ -26,6 +26,14 @@ export function FirstTransfer({
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const [progress, setProgress] = useState<string | null>(null);
   const [compare, setCompare] = useState(false);
   const [choices, setChoices] = useState<Choices>({});
   async function load() {
@@ -66,10 +74,16 @@ export function FirstTransfer({
       const selected = side
         ? Object.fromEntries(conflicts.map((c) => [c.key, side]))
         : choices;
-      const result = await rpc.call("setup_finish", {
+      let result = await rpc.call("setup_finish", {
         planId: preview.planId,
         choices: selected,
       });
+      while (alive.current && result.status?.phase === "syncing") {
+        setProgress(result.status.message);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        result = await rpc.call("status");
+      }
+      if (!alive.current) return;
       if (result.status?.phase === "synced") complete(result);
       else {
         setError(result.status?.message ?? "Не удалось применить настройки.");
@@ -80,6 +94,7 @@ export function FirstTransfer({
         e instanceof Error ? e.message : "Не удалось завершить подключение.",
       );
     } finally {
+      setProgress(null);
       setBusy(false);
     }
   }
@@ -110,6 +125,36 @@ export function FirstTransfer({
         </p>
       </div>
       <Failure message={error} retry={load} />
+      {busy && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {progress ?? "Применяем настройки…"}
+        </p>
+      )}
+      {preview?.changes.some((c) => c.key.startsWith("plugins/")) && (
+        <details open className="space-y-2 text-sm">
+          <summary className="cursor-pointer font-medium">
+            Перенос плагинов
+          </summary>
+          <p className="text-xs text-muted-foreground">
+            Добавим отсутствующие плагины и перенесём включение. Удаления не
+            передаются. Плагин запускается с обычным для BB доступом к
+            компьютеру.
+          </p>
+          <ul className="max-h-64 space-y-2 overflow-y-auto">
+            {preview.changes
+              .filter((c) => c.key.startsWith("plugins/"))
+              .map((c) => (
+                <li key={c.key} className="break-words text-xs">
+                  <span className="font-medium">{c.key.slice(8)}</span>
+                  <br />
+                  {c.remotePresent
+                    ? displayValue(c.remote, true)
+                    : displayValue(c.local, true)}
+                </li>
+              ))}
+          </ul>
+        </details>
+      )}
       {!preview && !error && (
         <p role="status" className="text-sm text-muted-foreground">
           Сравниваем настройки…
@@ -256,6 +301,7 @@ export function Setup({
     appearance: current.options.appearance,
     keyboard: current.options.keyboard,
     interface: current.options.interface,
+    plugins: current.options.plugins,
   });
   const [busy, setBusy] = useState(false);
   const [prepared, setPrepared] = useState(false);

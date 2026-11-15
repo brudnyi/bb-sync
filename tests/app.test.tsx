@@ -14,6 +14,7 @@ const base = (): PublicStatus => ({
     appearance: true,
     keyboard: true,
     interface: true,
+    plugins: false,
     intervalSeconds: 60,
   },
   enabled: false,
@@ -172,6 +173,63 @@ describe("bb-sync page", () => {
     });
     slot.lifecycle.unmount();
   });
+  it("keeps waiting while a plugin installation runs in the background", async () => {
+    let running = false;
+    const value = { ...base(), hasBaseline: false };
+    const app = await loadPluginApp(() => import("../app"));
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "" },
+      {
+        rpc: {
+          status: () => (running ? base() : value),
+          preview: () => ({
+            planId: "a".repeat(64),
+            firstConnection: true,
+            remoteExists: true,
+            localCount: 0,
+            unsupported: [],
+            changes: [
+              {
+                key: "plugins/demo",
+                base: null,
+                basePresent: false,
+                local: null,
+                localPresent: false,
+                remote: {
+                  enabled: true,
+                  source: `git:https://github.com/example/plugin.git@${"a".repeat(40)}`,
+                },
+                remotePresent: true,
+                conflicting: false,
+              },
+            ],
+          }),
+          setup_finish: () => {
+            running = true;
+            return {
+              ...value,
+              status: {
+                ...base().status!,
+                phase: "syncing",
+                message: "Установка плагина demo…",
+              },
+            };
+          },
+        },
+      },
+    );
+    await slot.findByText("Перенос плагинов");
+    fireEvent.click(
+      await slot.findByRole("button", {
+        name: "Использовать настройки из GitHub",
+      }),
+    );
+    await slot.findByText("Установка плагина demo…");
+    await slot.findByText("Синхронизация на паузе", {}, { timeout: 3000 });
+    expect(slot.queryByRole("alert")).toBeNull();
+    slot.lifecycle.unmount();
+  });
   it("creates the recommended private store through the setup flow", async () => {
     const value = {
       ...base(),
@@ -213,7 +271,12 @@ describe("bb-sync page", () => {
     expect(call?.input).toMatchObject({
       create: true,
       repository: "bb-sync-settings",
-      scope: { appearance: true, keyboard: true, interface: true },
+      scope: {
+        appearance: true,
+        keyboard: true,
+        interface: true,
+        plugins: false,
+      },
     });
     slot.lifecycle.unmount();
   });

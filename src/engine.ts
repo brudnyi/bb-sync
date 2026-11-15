@@ -97,6 +97,9 @@ export class Engine {
           : {}),
       });
   }
+  progress(message: string): void {
+    this.setStatus({ message });
+  }
   getStatus(): SyncStatus {
     return structuredClone(this.status);
   }
@@ -123,6 +126,7 @@ export class Engine {
         "Файл настроек удалён из GitHub. Восстановите его из истории репозитория.",
       );
     const local = await this.preferences.capture();
+    this.preferences.observe?.(remote.settings);
     const base = state.base;
     // Preserve settings owned by a newer plugin or disabled scope verbatim.
     const projectedLocal: Snapshot = { ...local };
@@ -143,6 +147,7 @@ export class Engine {
         if (
           this.preferences.supports(key) &&
           !key.startsWith("keyboard/") &&
+          !key.startsWith("plugins/") &&
           !Object.hasOwn(remote.settings, key)
         )
           remote.settings[key] = value;

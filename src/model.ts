@@ -79,7 +79,9 @@ export function merge(
       l = local[key],
       r = remote[key];
     let value: Value | undefined;
-    if (equal(l, r)) value = l;
+    if (key.startsWith("plugins/") && (l === undefined || r === undefined))
+      value = l ?? r ?? b;
+    else if (equal(l, r)) value = l;
     else if (base !== null && equal(l, b)) value = r;
     else if (base !== null && equal(r, b)) value = l;
     else if (choices[key]) value = choices[key] === "local" ? l : r;

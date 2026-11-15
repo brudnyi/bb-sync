@@ -30,6 +30,7 @@ const commands: Record<string, string> = {
 };
 export function settingLabel(key: string): string {
   if (labels[key]) return labels[key];
+  if (key.startsWith("plugins/")) return `Плагин ${key.slice(8)}`;
   if (key.startsWith("keyboard/")) {
     const [, raw, platform] = key.split("/");
     let command = raw ?? "";
@@ -48,6 +49,15 @@ export function displayValue(value: unknown, present: boolean): string {
   if (typeof value === "boolean") return value ? "Включено" : "Выключено";
   if (typeof value === "string")
     return value === "__automatic__" ? "Автоматически" : value;
+  if (
+    value &&
+    typeof value === "object" &&
+    "enabled" in value &&
+    "source" in value
+  ) {
+    const spec = value as { enabled: boolean; source: string };
+    return `${spec.enabled ? "Включён" : "Выключен"} · ${spec.source}`;
+  }
   if (value && typeof value === "object" && "key" in value) {
     const v = value as Record<string, unknown>;
     return [

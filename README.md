@@ -1,6 +1,6 @@
 # Sync
 
-Two-way sync of BB themes, keyboard shortcuts, and selected interface preferences through a **private GitHub repository**. No Git checkout, external database, or additional service.
+Two-way sync of BB themes, keyboard shortcuts, plugins, and selected interface preferences through a **private GitHub repository**. No Git checkout, external database, or additional service.
 
 Requires BB 0.49.0 or newer and plugin SDK 0.6.132 or newer. Each independent BB server needs its own installation. Clients of the same BB server already share these server settings.
 
@@ -31,12 +31,24 @@ Local edits are detected every three seconds and must be stable across two obser
 
 ## What travels
 
-- Selected theme ID and favicon color. Custom theme files and plugin installations do not travel: install the same theme on each computer first.
+- Selected theme ID and favicon color. Custom theme files do not travel. With the Plugins group enabled, missing Git/npm plugins are installed before their themes, shortcuts and interface selections are applied.
 - Keyboard overrides, including disabled bindings, reset-to-default changes, and separate macOS/Windows/Linux overrides. Each command/platform pair merges independently.
 - Keyboard hints, archive confirmation, Enter-to-steer behavior, command summaries, terminal copy-on-select, and streamer mode.
-- Navigation/thread-list/composer provider selection; sidebar destination and footer order/visibility; collapsed Info sections and the pinned context card. A provider must already be installed on the receiving server.
+- Navigation/thread-list/composer provider selection; sidebar destination and footer order/visibility; collapsed Info sections and the pinned context card. A provider must be installed on the receiving server or included in the selected Plugins group.
 
-Window sizes, split layouts, zoom, browser-local state, thread-list grouping/filter preferences owned by the Thread list plugin, projects, thread history, credentials, plugin installation, and arbitrary plugin settings are outside this version's scope. Navigation order is a list and merges as one field.
+Window sizes, split layouts, zoom, browser-local state, thread-list grouping/filter preferences owned by the Thread list plugin, projects, thread history, credentials and arbitrary plugin settings are outside this version's scope. Navigation order is a list and merges as one field.
+
+## Plugin synchronization
+
+Enable **Плагины** in Sync’s group controls, review the transfer, and confirm. The group is off on upgrade until selected; other groups and polling frequency stay as configured. On another laptop, install Sync itself, connect the same private repository, and enable the group there too. Review lists the plugin sources before confirmation. Plugin installation grants the same access as an ordinary BB installation.
+
+- Missing plugins from HTTPS Git sources and npm are installed through BB’s background installation jobs. Git sources are pinned to an activated commit, npm to an exact version; monorepo subdirectories are preserved. Sources containing credentials and local filesystem paths are excluded. Private plugin sources need their own access on each server.
+- Enabled/disabled state travels for portable and bundled plugins. Sync itself is excluded so it cannot disable its own synchronization. An unavailable bundled plugin requires upgrading BB before applying the transfer.
+- Installed plugins keep their current source and version. Sync does not update, downgrade or replace them. The first recorded installation source remains the source for new laptops; updates are managed in BB.
+- Inventories combine additively. Removing a plugin never removes it elsewhere. A device remembers its own removals and does not reinstall them automatically; reinstall manually in BB to include that plugin locally again. New devices still receive the shared inventory. Extra local plugins are retained. A local-path installation with the same ID is left untouched.
+- Plugin settings, API keys, OAuth sessions, secrets and plugin data never travel. Newly installed plugins may ask for their own setup. Installation and activation failures keep a durable journal for retry; closing the page does not cancel the transfer. After a restart, in-progress BB jobs are resumed rather than duplicated.
+
+Restoring a settings snapshot can restore plugin enablement, but never uninstalls an added plugin. This protects its local settings and secrets.
 
 ## Merge and recovery
 

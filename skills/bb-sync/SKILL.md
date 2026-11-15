@@ -15,3 +15,5 @@ RPC `options` changes pause/resume, selected groups, and frequency. Changing gro
 `bb sync restore --json` restores the last local snapshot and pauses automatic sync. Use only when requested. It does not change GitHub.
 
 Never extract, print, or embed authentication credentials in shell arguments, exported JSON, or chat. Native secret plugin settings remain available for explicit advanced configuration. The preferences repository must be private and separate from the source repository.
+
+The optional `plugins` group installs missing portable Git/npm plugins and synchronizes enabled state, including bundled plugins present on the server. It never removes plugins, changes already-installed versions, transfers local paths/settings/secrets, or controls Sync itself. Device-local inventory remembers manual removals so they are not reinstalled on that device. Manual reinstall opts that device back in. Installation uses persistent BB jobs and the sync journal. A failed installation can be retried with `bb sync now`; do not remove plugins or clear the journal to bypass it. Snapshot restore leaves extra plugins installed.

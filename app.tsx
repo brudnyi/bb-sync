@@ -32,6 +32,7 @@ function Preferences({
     appearance: current.options.appearance,
     keyboard: current.options.keyboard,
     interface: current.options.interface,
+    plugins: current.options.plugins,
   });
   const [interval, setInterval] = useState(current.options.intervalSeconds);
   const intervalId = useId();
@@ -187,6 +188,13 @@ function SyncPage() {
       void refresh();
     previousConnection.current = connection;
   }, [connection, refresh]);
+  useEffect(() => {
+    if (data?.status?.phase !== "syncing") return;
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [data?.status?.phase, refresh]);
   const planId = data?.status?.planId;
   const choices = selection.planId === planId ? selection.choices : {};
   const setChoices = (next: Choices | ((prev: Choices) => Choices)) =>
@@ -298,6 +306,11 @@ function SyncPage() {
                   </p>
                 </div>
               </div>
+              {busy && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {status?.message}
+                </p>
+              )}
               {failed && (
                 <div className="space-y-2 border-l-2 border-destructive pl-3 text-sm">
                   <p>{status?.message}</p>

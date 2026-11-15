@@ -1,6 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { equal, type Snapshot } from "./model";
+import { type PluginSync, pluginId, pluginSpecSchema } from "./plugins";
 
 type Sdk = BbPluginApi["sdk"];
 type Bindings = Parameters<Sdk["system"]["updateKeyboardSettings"]>[0];
@@ -52,6 +53,7 @@ export type Scope = {
   appearance: boolean;
   keyboard: boolean;
   interface: boolean;
+  plugins: boolean;
 };
 const bindingKey = (binding: Bindings[number]) =>
   `keyboard/${encodeURIComponent(binding.command)}/${binding.platform ?? "all"}`;
@@ -74,6 +76,7 @@ function bindingIdentity(key: string) {
   };
 }
 export interface Preferences {
+  observe?(remote: Snapshot): void;
   capture(): Promise<Snapshot>;
   supports(key: string): boolean;
   prepare(target: Snapshot): Promise<void>;
@@ -82,12 +85,29 @@ export interface Preferences {
 export class BbPreferences implements Preferences {
   private commands = new Set<string>();
   private plugins = new Set<string>();
+  private plannedPlugins = new Set<string>();
+  observe(remote: Snapshot): void {
+    this.plannedPlugins = new Set(
+      Object.entries(remote).flatMap(([key, value]) => {
+        const id = pluginId(key);
+        return this.scope.plugins &&
+          id &&
+          this.pluginSync?.supports(key) &&
+          pluginSpecSchema.safeParse(value).success
+          ? [id]
+          : [];
+      }),
+    );
+  }
   constructor(
     private sdk: Sdk,
     private scope: Scope,
     private signal?: AbortSignal,
+    private pluginSync?: PluginSync,
   ) {}
   supports(key: string): boolean {
+    if (key.startsWith("plugins/"))
+      return this.scope.plugins && !!this.pluginSync?.supports(key);
     if (key.startsWith("appearance/"))
       return (
         this.scope.appearance &&
@@ -103,7 +123,10 @@ export class BbPreferences implements Preferences {
     if (!binding || !this.scope.keyboard) return false;
     if (this.commands.has(binding.command)) return true;
     const plugin = /^plugin:([^/]+)\/.+/.exec(binding.command)?.[1];
-    return plugin !== undefined && this.plugins.has(plugin);
+    return (
+      plugin !== undefined &&
+      (this.plugins.has(plugin) || this.plannedPlugins.has(plugin))
+    );
   }
   async capture(): Promise<Snapshot> {
     this.signal?.throwIfAborted();
@@ -134,10 +157,14 @@ export class BbPreferences implements Preferences {
       for (const name of Object.keys(uiSchemas) as (keyof typeof uiSchemas)[])
         result[`ui/${name}`] = preferences[name].value;
     }
+    if (this.scope.plugins && this.pluginSync)
+      Object.assign(result, await this.pluginSync.capture());
     return result;
   }
   async prepare(target: Snapshot): Promise<void> {
     this.signal?.throwIfAborted();
+    const pendingActivation =
+      this.scope.plugins && (await this.pluginSync?.prepare(target));
     if (
       this.scope.appearance &&
       (!Object.hasOwn(target, "appearance/themeId") ||
@@ -160,11 +187,12 @@ export class BbPreferences implements Preferences {
     }
     for (const [key, value] of Object.entries(target)) {
       if (!this.supports(key)) continue;
+      if (key.startsWith("plugins/")) continue;
       if (key.startsWith("keyboard/")) shortcut.parse(value);
       else if (key === "appearance/themeId") {
         const themeId = z.string().min(1).max(200).parse(value);
         const resolved = await this.sdk.theme.resolve({ themeId });
-        if (resolved.themeId !== themeId)
+        if (resolved.themeId !== themeId && !pendingActivation)
           throw new Error(
             `Install theme ${themeId} on this computer before syncing.`,
           );
@@ -185,7 +213,7 @@ export class BbPreferences implements Preferences {
           typeof value === "string" &&
           value !== "__automatic__"
         ) {
-          if (!this.plugins.has(value.split("/")[0]!))
+          if (!this.plugins.has(value.split("/")[0]!) && !pendingActivation)
             throw new Error(
               `Install ${value.split("/")[0]} before selecting its interface.`,
             );
@@ -214,11 +242,17 @@ export class BbPreferences implements Preferences {
     let current = await this.capture();
     assertUnchanged(current);
     await this.prepare(target);
+    if (this.scope.plugins && this.pluginSync) {
+      await this.pluginSync.apply(target, before);
+      current = await this.capture();
+      await this.prepare(target);
+    }
     for (const key of new Set([
       ...Object.keys(before),
       ...Object.keys(target),
     ])) {
       if (
+        key.startsWith("plugins/") ||
         !this.supports(key) ||
         equal(before[key], target[key]) ||
         equal(current[key], target[key])
@@ -290,6 +324,7 @@ export class BbPreferences implements Preferences {
       ...Object.keys(target),
     ])) {
       if (
+        !(key.startsWith("plugins/") && target[key] === undefined) &&
         this.supports(key) &&
         !equal(before[key], target[key]) &&
         !equal(after[key], target[key])

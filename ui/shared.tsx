@@ -43,12 +43,16 @@ export const groups = [
     title: "Интерфейс",
     detail: "Навигация, видимые разделы и поведение bb",
   },
+  {
+    key: "plugins",
+    title: "Плагины",
+    detail:
+      "Установка из Git/npm и включение. Без удаления, настроек и секретов; локальные пути пропускаются. Уже установленные версии сохраняются.",
+  },
 ] as const;
-export type Scope = {
-  appearance: boolean;
-  keyboard: boolean;
-  interface: boolean;
-};
+export type { Scope } from "../src/preferences";
+
+import type { Scope } from "../src/preferences";
 export function ScopePicker({
   scope,
   onChange,

@@ -17,6 +17,7 @@ import {
   GitHubLogin,
   repositorySchema,
 } from "./src/onboarding";
+import { PluginSync, pluginMemorySchema } from "./src/plugins";
 import { BbPreferences } from "./src/preferences";
 
 const publicSchema = z.object({
@@ -31,6 +32,7 @@ const publicSchema = z.object({
     appearance: z.boolean(),
     keyboard: z.boolean(),
     interface: z.boolean(),
+    plugins: z.boolean(),
     intervalSeconds: z.number(),
   }),
 });
@@ -45,6 +47,7 @@ const scopeInput = z
     appearance: z.boolean(),
     keyboard: z.boolean(),
     interface: z.boolean(),
+    plugins: z.boolean(),
   })
   .refine(
     (v) => Object.values(v).some(Boolean),
@@ -101,6 +104,7 @@ export const rpcContract = defineRpcContract({
         appearance: z.boolean().optional(),
         keyboard: z.boolean().optional(),
         interface: z.boolean().optional(),
+        plugins: z.boolean().optional(),
         intervalSeconds: z.number().int().min(30).max(3600).optional(),
       })
       .strict(),
@@ -133,6 +137,11 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Интерфейс и навигация",
       default: true,
+    },
+    plugins: {
+      type: "boolean",
+      label: "Установка и включение плагинов",
+      default: false,
     },
     intervalSeconds: {
       type: "number",
@@ -191,10 +200,16 @@ export default async function plugin(bb: BbPluginApi) {
         appearance: config.appearance,
         keyboard: config.keyboard,
         interface: config.interface,
+        plugins: config.plugins,
       };
       if (!Object.values(scope).some(Boolean))
         throw new Error("Выберите хотя бы одну группу настроек.");
-      const id = fingerprint({ target, scope });
+      // Keep the existing baseline identity when the new group is off.
+      const { plugins, ...originalScope } = scope;
+      const id = fingerprint({
+        target,
+        scope: plugins ? scope : originalScope,
+      });
       const key = fingerprint({ id, token: config.token });
       if (runtime?.key === key && !runtime.controller.signal.aborted)
         return runtime;
@@ -202,7 +217,32 @@ export default async function plugin(bb: BbPluginApi) {
       await runtime?.engine.drain();
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, lifecycle.signal]);
-      const preferences = new BbPreferences(bb.sdk, scope, signal);
+      const pluginSync = scope.plugins
+        ? new PluginSync(
+            bb.sdk,
+            {
+              async load() {
+                const row = database
+                  .prepare("SELECT value FROM sync_state WHERE target = ?")
+                  .get("plugin-inventory-v1") as { value: string } | undefined;
+                return row
+                  ? pluginMemorySchema.parse(JSON.parse(row.value))
+                  : null;
+              },
+              async save(value) {
+                signal.throwIfAborted();
+                database
+                  .prepare(
+                    "INSERT INTO sync_state(target, value) VALUES (?, ?) ON CONFLICT(target) DO UPDATE SET value=excluded.value",
+                  )
+                  .run("plugin-inventory-v1", JSON.stringify(value));
+              },
+            },
+            signal,
+            (message) => engine.progress(message),
+          )
+        : undefined;
+      const preferences = new BbPreferences(bb.sdk, scope, signal, pluginSync);
       const remote = new GitHub(target, config.token, signal);
       const engine = new Engine(
         preferences,
@@ -236,6 +276,8 @@ export default async function plugin(bb: BbPluginApi) {
       initializing = null;
     }
   }
+  let operation: Promise<PublicStatus> | null = null;
+  let operationError: string | null = null;
   async function publicStatus(): Promise<PublicStatus> {
     const config = await settings.get();
     try {
@@ -245,7 +287,11 @@ export default async function plugin(bb: BbPluginApi) {
         enabled: config.enabled,
         repository: config.repository,
         configurationError: null,
-        status: r.engine.getStatus(),
+        status: operationError
+          ? { ...r.engine.getStatus(), phase: "error", message: operationError }
+          : operation
+            ? { ...r.engine.getStatus(), phase: "syncing" }
+            : r.engine.getStatus(),
         hasBaseline: await r.engine.hasBaseline(),
         needsReview:
           (await bb.storage.kv.get<boolean>("review-required")) === true,
@@ -253,6 +299,7 @@ export default async function plugin(bb: BbPluginApi) {
           appearance: config.appearance,
           keyboard: config.keyboard,
           interface: config.interface,
+          plugins: config.plugins,
           intervalSeconds: config.intervalSeconds,
         },
       };
@@ -274,6 +321,7 @@ export default async function plugin(bb: BbPluginApi) {
           appearance: config.appearance,
           keyboard: config.keyboard,
           interface: config.interface,
+          plugins: config.plugins,
           intervalSeconds: config.intervalSeconds,
         },
       };
@@ -282,6 +330,7 @@ export default async function plugin(bb: BbPluginApi) {
   async function sync(
     resolution?: Parameters<Engine["sync"]>[0],
   ): Promise<PublicStatus> {
+    operationError = null;
     const r = await getRuntime();
     await r.engine.sync(resolution);
     if (r.engine.getStatus().phase === "synced")
@@ -296,11 +345,35 @@ export default async function plugin(bb: BbPluginApi) {
     publish();
     return publicStatus();
   }
+  async function launch(
+    task: () => Promise<PublicStatus>,
+  ): Promise<PublicStatus> {
+    if (!operation) {
+      operationError = null;
+      operation = task();
+      void operation
+        .catch((error: unknown) => {
+          operationError =
+            error instanceof Error
+              ? error.message
+              : "Не удалось завершить перенос.";
+          publish();
+        })
+        .finally(() => {
+          operation = null;
+          publish();
+        });
+    }
+    // Keep RPCs short while BB's durable installation jobs continue server-side.
+    await Promise.race([operation.catch(() => {}), sleep(150)]);
+    if (operationError) throw new Error(operationError);
+    return publicStatus();
+  }
   bb.rpc.register(rpcContract, {
     status: publicStatus,
-    sync: () => sync(),
-    resolve: (input) => sync(input),
-    restore,
+    sync: () => launch(() => sync()),
+    resolve: (input) => launch(() => sync(input)),
+    restore: () => launch(restore),
     preview: async () => {
       const r = await getRuntime();
       const preview = await r.engine.preview();
@@ -358,28 +431,33 @@ export default async function plugin(bb: BbPluginApi) {
         return publicStatus();
       }),
     setup_finish: (input) =>
-      edit(async () => {
-        const r = await getRuntime();
-        const preview = await r.engine.preview();
-        if (
-          input.planId !==
-          fingerprint({ target: r.key, planId: preview.planId })
-        )
-          throw new Error(
-            "Настройки или хранилище изменились. Обнови сравнение перед переносом.",
-          );
-        await r.engine.sync({ planId: preview.planId, choices: input.choices });
-        if ((await getRuntime()).key !== r.key)
-          throw new Error(
-            "Подключение изменилось во время переноса. Проверь выбранное хранилище.",
-          );
-        if (r.engine.getStatus().phase === "synced") {
-          await bb.storage.kv.set("review-required", false);
-          await settings.experimental_set({ enabled: true });
-        }
-        publish();
-        return publicStatus();
-      }),
+      launch(() =>
+        edit(async () => {
+          const r = await getRuntime();
+          const preview = await r.engine.preview();
+          if (
+            input.planId !==
+            fingerprint({ target: r.key, planId: preview.planId })
+          )
+            throw new Error(
+              "Настройки или хранилище изменились. Обнови сравнение перед переносом.",
+            );
+          await r.engine.sync({
+            planId: preview.planId,
+            choices: input.choices,
+          });
+          if ((await getRuntime()).key !== r.key)
+            throw new Error(
+              "Подключение изменилось во время переноса. Проверь выбранное хранилище.",
+            );
+          if (r.engine.getStatus().phase === "synced") {
+            await bb.storage.kv.set("review-required", false);
+            await settings.experimental_set({ enabled: true });
+          }
+          publish();
+          return publicStatus();
+        }),
+      ),
     options: (input) =>
       edit(async () => {
         const config = await settings.get();
@@ -387,6 +465,7 @@ export default async function plugin(bb: BbPluginApi) {
           appearance: input.appearance ?? config.appearance,
           keyboard: input.keyboard ?? config.keyboard,
           interface: input.interface ?? config.interface,
+          plugins: input.plugins ?? config.plugins,
         };
         scopeInput.parse(scope);
         const scopeChanged = Object.entries(scope).some(
@@ -475,6 +554,7 @@ export default async function plugin(bb: BbPluginApi) {
       "appearance",
       "keyboard",
       "interface",
+      "plugins",
     ] as const;
     if (keys.some((key) => next[key] !== previous[key]))
       runtime?.controller.abort();
@@ -492,6 +572,10 @@ export default async function plugin(bb: BbPluginApi) {
           const config = await settings.get();
           if (
             config.enabled &&
+            !operation &&
+            (!runtime ||
+              runtime.controller.signal.aborted ||
+              runtime.engine.getStatus().phase !== "syncing") &&
             !(await bb.storage.kv.get<boolean>("review-required"))
           ) {
             const r = await getRuntime();
@@ -506,7 +590,7 @@ export default async function plugin(bb: BbPluginApi) {
             const changed = observation === seen && observation !== settled;
             seen = observation;
             // Conflicts are checked again only after a local edit or the next remote poll.
-            if (due || changed) {
+            if ((due || changed) && !operation) {
               const result = await r.engine.sync();
               lastRemote = Date.now();
               settled = `${r.key}:${fingerprint(await r.preferences.capture())}`;
@@ -532,6 +616,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.onDispose(async () => {
     lifecycle.abort();
     await login.dispose();
+    await operation?.catch(() => {});
     await edits;
     runtime?.controller.abort();
     await runtime?.engine.drain();
