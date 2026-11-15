@@ -14,14 +14,20 @@ Open **Settings → Installed plugins → bb-sync**. The **bb-sync** sidebar pag
 
 ## Connect your laptops
 
-1. Create a separate **private** GitHub repository for personal preferences, initialized with a README so a branch exists. This source-code repository is not a preferences repository.
-2. Create a fine-grained GitHub personal access token, limited to that repository, with **Contents: read and write**. Enter it in the plugin's secret **GitHub token** setting on each BB server. The token stays in BB's secret storage; it is never placed in the settings file or returned by the plugin's RPC.
-3. Set the same `owner/repository`, branch (default `main`), and file (default `bb-sync.json`) on every laptop. Select the groups to sync. Using identical groups on every computer is recommended.
-4. Click **Синхронизировать** on the first laptop. If the file is missing, it is created from that laptop's selected preferences. A missing/inaccessible repository or branch is an error, not an empty preset.
-5. On the other laptops, sync once and resolve any initial differences. Nothing is overwritten until every conflicting field has a choice. Required fields absent from the remote file retain the local value; an absent shortcut means BB's default binding.
-6. Enable **Автоматическая синхронизация** on each laptop. Local changes are detected every three seconds and must be stable across two observations. GitHub is checked every 60 seconds by default (configurable from 30 to 3600 seconds). Changes made while BB is closed are detected at startup.
+Open **bb-sync** from the sidebar. All everyday setup happens on this page; no token copying, terminal commands, or manual repository creation is needed when GitHub CLI is already installed.
 
-Automatic sync starts **off**. Secrets are entered through BB's native settings form, not command arguments. A token with access to the code repository alone is insufficient if preferences are in a separate repository.
+1. Click **Подключить GitHub**. BB reuses the GitHub CLI account already signed in on the computer running the BB server. If sign-in is needed, the plugin shows a one-time code and a button to open GitHub on your viewing device. Confirm in the browser; the wizard continues automatically. An expired CLI credential starts a fresh sign-in.
+2. Choose the recommended **username/bb-sync-settings**, or choose another writable private repository from the list. The recommended repository is created privately and initialized automatically if absent. Existing empty repositories are checked and initialized with a README before use. Choose which preference groups to transfer.
+3. Review the first transfer. On the first laptop, click **Начать синхронизацию**. On the next laptop, click **Использовать настройки из GitHub**, or **Сравнить и выбрать** to review individual fields. Replacing GitHub settings with this laptop's settings is an explicit secondary action.
+4. Automatic sync turns on only after a successful confirmed transfer. The page has pause/resume, scope and frequency controls, recovery, and a copyable instruction for the next laptop.
+
+[GitHub CLI](https://cli.github.com/) must be installed on the computer running the BB server for guided sign-in. If absent, the wizard explains where to install it and offers a retry. Device sign-in uses the GitHub CLI OAuth application and its normal permissions and credential-storage behavior. BB stores its own credential copy in its native secret setting. No authentication credential is returned by plugin RPC, put in command arguments, or included in the settings file. Automation-only GH_TOKEN/GITHUB_TOKEN environment variables are not used by guided sign-in.
+
+Existing configured installations keep their credentials, repository, baseline, and automatic-sync preference when upgrading. The native plugin configuration page remains available for explicit advanced configuration, including a repository-limited fine-grained token with Contents read/write access. Failed guided sign-in never silently switches to this method.
+
+The settings repository must be private and separate from this source-code repository. Only GitHub.com is supported. Select the same repository, branch, and file on every laptop. The wizard uses the selected repository's default branch and `bb-sync.json`; advanced settings can change them. For an already selected repository, existing advanced branch/file choices are preserved.
+
+Local edits are detected every three seconds and must be stable across two observations. GitHub is checked every 60 seconds by default (configurable from 30 to 3600 seconds). Changes made while BB is closed are detected at startup. Changing the selected groups or preparing a new repository pauses auto-sync and requires a new preview/confirmation.
 
 ## What travels
 
@@ -52,7 +58,7 @@ bb sync now --json
 bb sync restore --json
 ```
 
-`restore` pauses automatic sync first. Conflict resolution is available in the page. CLI exits nonzero when unconfigured, conflicted, in recovery, or failed. The commands never print the token.
+`restore` pauses automatic sync first. Conflict resolution and first-transfer preview are available in the page. CLI exits nonzero when unconfigured, conflicted, in recovery, or failed. The commands never print the token.
 
 ## Development
 

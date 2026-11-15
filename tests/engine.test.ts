@@ -88,6 +88,50 @@ async function established(
 }
 
 describe("two-way sync", () => {
+  it("previews a first transfer without changing local or remote settings", async () => {
+    const repo = new Repository({ theme: "dark" });
+    const local = new Local({ theme: "light" }),
+      state = new MemoryState();
+    const engine = new Engine(local, repo, state);
+    const preview = await engine.preview();
+    expect(preview).toMatchObject({
+      firstConnection: true,
+      remoteExists: true,
+      localCount: 1,
+    });
+    expect(preview.changes).toMatchObject([
+      { key: "theme", local: "light", remote: "dark", conflicting: true },
+    ]);
+    expect(repo.writes).toBe(0);
+    expect(local.applications).toBe(0);
+    expect(state.value).toBeNull();
+    expect(
+      (
+        await engine.sync({
+          planId: preview.planId,
+          choices: { theme: "remote" },
+        })
+      ).phase,
+    ).toBe("synced");
+    expect(local.values.theme).toBe("dark");
+  });
+  it("rejects a first-transfer preview when a local setting changes before confirmation", async () => {
+    const repo = new Repository({ theme: "dark" }),
+      local = new Local({ theme: "light" });
+    const engine = new Engine(local, repo, new MemoryState());
+    const preview = await engine.preview();
+    local.values.theme = "blue";
+    expect(
+      (
+        await engine.sync({
+          planId: preview.planId,
+          choices: { theme: "remote" },
+        })
+      ).phase,
+    ).toBe("error");
+    expect(local.values.theme).toBe("blue");
+    expect(repo.writes).toBe(0);
+  });
   it("publishes the first computer into a missing file without applying local changes", async () => {
     const local = new Local({ theme: "dark", hint: true });
     const repo = new Repository({});

@@ -41,6 +41,15 @@ export const statusSchema = z.object({
   unsupported: z.array(z.string()),
 });
 export type SyncStatus = z.infer<typeof statusSchema>;
+export const previewSchema = z.object({
+  planId: z.string(),
+  firstConnection: z.boolean(),
+  remoteExists: z.boolean(),
+  localCount: z.number(),
+  changes: z.array(conflictSchema.extend({ conflicting: z.boolean() })),
+  unsupported: z.array(z.string()),
+});
+export type Preview = z.infer<typeof previewSchema>;
 export type RemoteStore = {
   read(): Promise<Remote>;
   write(settings: Snapshot, sha: string | null): Promise<string>;
@@ -103,6 +112,113 @@ export class Engine {
     this.queue = result.catch(() => {});
     return result;
   }
+  private async readPlan(
+    state: State,
+    resolution?: { planId: string; choices: Choices },
+  ) {
+    const remote = await this.remote.read();
+    const originalRemoteSettings = structuredClone(remote.settings);
+    if (state.base !== null && remote.sha === null)
+      throw new Error(
+        "Файл настроек удалён из GitHub. Восстановите его из истории репозитория.",
+      );
+    const local = await this.preferences.capture();
+    const base = state.base;
+    // Preserve settings owned by a newer plugin or disabled scope verbatim.
+    const projectedLocal: Snapshot = { ...local };
+    const unsupported = Object.keys(remote.settings).filter(
+      (k) => !this.preferences.supports(k),
+    );
+    for (const key of new Set([...Object.keys(base ?? {}), ...unsupported])) {
+      if (!this.preferences.supports(key)) {
+        if (Object.hasOwn(remote.settings, key))
+          projectedLocal[key] = remote.settings[key]!;
+        else delete projectedLocal[key];
+      }
+    }
+    // A newly enabled scope has no remote values yet. Keep required local
+    // preferences; absent keyboard entries still mean reset and need a choice.
+    if (base === null)
+      for (const [key, value] of Object.entries(projectedLocal)) {
+        if (
+          this.preferences.supports(key) &&
+          !key.startsWith("keyboard/") &&
+          !Object.hasOwn(remote.settings, key)
+        )
+          remote.settings[key] = value;
+      }
+    const planId = fingerprint({ base, local: projectedLocal, remote });
+    if (resolution && resolution.planId !== planId)
+      throw new Error(
+        "Настройки изменились после показа конфликта. Обновите сравнение и выберите значения заново.",
+      );
+    const initial = remote.sha === null && base === null;
+    const plan = initial
+      ? { settings: projectedLocal, conflicts: [] }
+      : merge(base, projectedLocal, remote.settings, resolution?.choices);
+    return {
+      remote,
+      originalRemoteSettings,
+      local,
+      base,
+      unsupported,
+      planId,
+      plan,
+    };
+  }
+  async hasBaseline(): Promise<boolean> {
+    const state = await this.store.load();
+    return state !== null && state.base !== null;
+  }
+  preview(): Promise<Preview> {
+    return this.exclusive(async () => {
+      const state = (await this.store.load()) ?? emptyState();
+      if (state.journal)
+        throw new Error(
+          "Сначала заверши прерванное применение или восстанови снимок.",
+        );
+      const {
+        remote,
+        originalRemoteSettings,
+        local,
+        base,
+        unsupported,
+        planId,
+        plan,
+      } = await this.readPlan(state);
+      const conflictKeys = new Set(plan.conflicts.map((c) => c.key));
+      const changes = [
+        ...new Set([
+          ...Object.keys(local),
+          ...Object.keys(originalRemoteSettings),
+        ]),
+      ]
+        .sort()
+        .filter(
+          (key) =>
+            this.preferences.supports(key) &&
+            !equal(local[key], originalRemoteSettings[key]),
+        )
+        .map((key) => ({
+          key,
+          base: base?.[key] ?? null,
+          local: local[key] ?? null,
+          remote: originalRemoteSettings[key] ?? null,
+          basePresent: base?.[key] !== undefined,
+          localPresent: Object.hasOwn(local, key),
+          remotePresent: Object.hasOwn(originalRemoteSettings, key),
+          conflicting: conflictKeys.has(key),
+        }));
+      return {
+        planId,
+        firstConnection: base === null,
+        remoteExists: remote.sha !== null,
+        localCount: Object.keys(local).length,
+        changes,
+        unsupported: unsupported.slice(0, 100),
+      };
+    });
+  }
   sync(resolution?: { planId: string; choices: Choices }): Promise<SyncStatus> {
     return this.exclusive(async () => {
       this.setStatus({ phase: "syncing", message: "Синхронизация…" });
@@ -135,49 +251,15 @@ export class Engine {
           }
         }
         for (let attempt = 0; attempt < 3; attempt++) {
-          const remote = await this.remote.read();
-          const originalRemoteSettings = structuredClone(remote.settings);
-          if (state.base !== null && remote.sha === null)
-            throw new Error(
-              "Файл настроек удалён из GitHub. Восстановите его из истории репозитория.",
-            );
-          const local = await this.preferences.capture();
-          const base = state.base;
-          // Preserve settings owned by a newer plugin or disabled scope verbatim.
-          const projectedLocal: Snapshot = { ...local };
-          const unsupported = Object.keys(remote.settings).filter(
-            (k) => !this.preferences.supports(k),
-          );
-          for (const key of new Set([
-            ...Object.keys(base ?? {}),
-            ...unsupported,
-          ])) {
-            if (!this.preferences.supports(key)) {
-              if (Object.hasOwn(remote.settings, key))
-                projectedLocal[key] = remote.settings[key]!;
-              else delete projectedLocal[key];
-            }
-          }
-          // A newly enabled scope has no remote values yet. Keep required local
-          // preferences; absent keyboard entries still mean reset and need a choice.
-          if (base === null)
-            for (const [key, value] of Object.entries(projectedLocal)) {
-              if (
-                this.preferences.supports(key) &&
-                !key.startsWith("keyboard/") &&
-                !Object.hasOwn(remote.settings, key)
-              )
-                remote.settings[key] = value;
-            }
-          const planId = fingerprint({ base, local: projectedLocal, remote });
-          if (resolution && resolution.planId !== planId)
-            throw new Error(
-              "Настройки изменились после показа конфликта. Обновите сравнение и выберите значения заново.",
-            );
-          const initial = remote.sha === null && base === null;
-          const plan = initial
-            ? { settings: projectedLocal, conflicts: [] }
-            : merge(base, projectedLocal, remote.settings, resolution?.choices);
+          const {
+            remote,
+            originalRemoteSettings,
+            local,
+            base,
+            unsupported,
+            planId,
+            plan,
+          } = await this.readPlan(state, resolution);
           if (plan.conflicts.length) {
             this.setStatus({
               phase: "conflict",

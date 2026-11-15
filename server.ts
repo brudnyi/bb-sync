@@ -1,9 +1,22 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { type BbPluginApi, defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { Engine, type State, stateSchema, statusSchema } from "./src/engine";
+import {
+  Engine,
+  previewSchema,
+  type State,
+  stateSchema,
+  statusSchema,
+} from "./src/engine";
 import { GitHub, targetSchema } from "./src/github";
 import { fingerprint } from "./src/model";
+import {
+  accountSchema,
+  authSchema,
+  GitHubAccount,
+  GitHubLogin,
+  repositorySchema,
+} from "./src/onboarding";
 import { BbPreferences } from "./src/preferences";
 
 const publicSchema = z.object({
@@ -12,7 +25,37 @@ const publicSchema = z.object({
   repository: z.string(),
   configurationError: z.string().nullable(),
   status: statusSchema.nullable(),
+  hasBaseline: z.boolean(),
+  needsReview: z.boolean(),
+  options: z.object({
+    appearance: z.boolean(),
+    keyboard: z.boolean(),
+    interface: z.boolean(),
+    intervalSeconds: z.number(),
+  }),
 });
+const choiceInput = z
+  .object({
+    planId: z.string().length(64),
+    choices: z.record(z.string(), z.enum(["local", "remote"])),
+  })
+  .strict();
+const scopeInput = z
+  .object({
+    appearance: z.boolean(),
+    keyboard: z.boolean(),
+    interface: z.boolean(),
+  })
+  .refine(
+    (v) => Object.values(v).some(Boolean),
+    "Выбери хотя бы одну группу настроек.",
+  );
+const setupSchema = z.object({
+  account: accountSchema.nullable(),
+  auth: authSchema,
+  error: z.string().nullable(),
+});
+export type SetupState = z.infer<typeof setupSchema>;
 export type PublicStatus = z.infer<typeof publicSchema>;
 export const rpcContract = defineRpcContract({
   status: { input: z.null(), output: publicSchema },
@@ -27,6 +70,42 @@ export const rpcContract = defineRpcContract({
     output: publicSchema,
   },
   restore: { input: z.null(), output: publicSchema },
+  preview: { input: z.null(), output: previewSchema },
+  setup_load: { input: z.null(), output: setupSchema },
+  auth_start: { input: z.null(), output: authSchema },
+  auth_restart: { input: z.null(), output: authSchema },
+  auth_status: { input: z.null(), output: authSchema },
+  auth_cancel: { input: z.null(), output: authSchema },
+  repositories: {
+    input: z.object({ page: z.number().int().min(1).max(100) }),
+    output: z.object({
+      repositories: z.array(repositorySchema),
+      more: z.boolean(),
+    }),
+  },
+  setup_prepare: {
+    input: z
+      .object({
+        create: z.boolean(),
+        repository: z.string().max(250),
+        scope: scopeInput,
+      })
+      .strict(),
+    output: publicSchema,
+  },
+  setup_finish: { input: choiceInput, output: publicSchema },
+  options: {
+    input: z
+      .object({
+        enabled: z.boolean().optional(),
+        appearance: z.boolean().optional(),
+        keyboard: z.boolean().optional(),
+        interface: z.boolean().optional(),
+        intervalSeconds: z.number().int().min(30).max(3600).optional(),
+      })
+      .strict(),
+    output: publicSchema,
+  },
 });
 
 export default async function plugin(bb: BbPluginApi) {
@@ -78,6 +157,24 @@ export default async function plugin(bb: BbPluginApi) {
   const publish = () => {
     if (!lifecycle.signal.aborted) bb.realtime.publish("changed", null);
   };
+  const login = new GitHubLogin(
+    async (token) => {
+      await settings.experimental_set({ token });
+    },
+    publish,
+    lifecycle.signal,
+  );
+  async function accountClient() {
+    const { token } = await settings.get();
+    if (!token) throw new Error("Сначала подключи GitHub.");
+    return new GitHubAccount(token, lifecycle.signal);
+  }
+  let edits: Promise<unknown> = Promise.resolve();
+  function edit<T>(task: () => Promise<T>): Promise<T> {
+    const result = edits.then(task);
+    edits = result.catch(() => {});
+    return result;
+  }
   async function getRuntime(): Promise<Runtime> {
     if (initializing) return initializing;
     initializing = (async () => {
@@ -99,7 +196,8 @@ export default async function plugin(bb: BbPluginApi) {
         throw new Error("Выберите хотя бы одну группу настроек.");
       const id = fingerprint({ target, scope });
       const key = fingerprint({ id, token: config.token });
-      if (runtime?.key === key) return runtime;
+      if (runtime?.key === key && !runtime.controller.signal.aborted)
+        return runtime;
       runtime?.controller.abort();
       await runtime?.engine.drain();
       const controller = new AbortController();
@@ -148,6 +246,15 @@ export default async function plugin(bb: BbPluginApi) {
         repository: config.repository,
         configurationError: null,
         status: r.engine.getStatus(),
+        hasBaseline: await r.engine.hasBaseline(),
+        needsReview:
+          (await bb.storage.kv.get<boolean>("review-required")) === true,
+        options: {
+          appearance: config.appearance,
+          keyboard: config.keyboard,
+          interface: config.interface,
+          intervalSeconds: config.intervalSeconds,
+        },
       };
     } catch (error) {
       return {
@@ -161,6 +268,14 @@ export default async function plugin(bb: BbPluginApi) {
               ? error.message
               : "Проверьте настройки подключения",
         status: null,
+        hasBaseline: false,
+        needsReview: false,
+        options: {
+          appearance: config.appearance,
+          keyboard: config.keyboard,
+          interface: config.interface,
+          intervalSeconds: config.intervalSeconds,
+        },
       };
     }
   }
@@ -169,6 +284,8 @@ export default async function plugin(bb: BbPluginApi) {
   ): Promise<PublicStatus> {
     const r = await getRuntime();
     await r.engine.sync(resolution);
+    if (r.engine.getStatus().phase === "synced")
+      await bb.storage.kv.set("review-required", false);
     return publicStatus();
   }
   async function restore(): Promise<PublicStatus> {
@@ -184,6 +301,114 @@ export default async function plugin(bb: BbPluginApi) {
     sync: () => sync(),
     resolve: (input) => sync(input),
     restore,
+    preview: async () => {
+      const r = await getRuntime();
+      const preview = await r.engine.preview();
+      return {
+        ...preview,
+        planId: fingerprint({ target: r.key, planId: preview.planId }),
+      };
+    },
+    setup_load: async () => {
+      const { token } = await settings.get();
+      if (!token) return { account: null, auth: login.status(), error: null };
+      try {
+        return {
+          account: await (await accountClient()).user(),
+          auth: login.status(),
+          error: null,
+        };
+      } catch {
+        return {
+          account: null,
+          auth: login.status(),
+          error: "Не удалось проверить аккаунт. Повтори подключение GitHub.",
+        };
+      }
+    },
+    auth_start: () => login.begin(),
+    auth_restart: () => login.begin(true),
+    auth_status: () => login.status(),
+    auth_cancel: () => login.cancel(),
+    repositories: async ({ page }) =>
+      (await accountClient()).repositories(page),
+    setup_prepare: (input) =>
+      edit(async () => {
+        if (runtime?.engine.getStatus().phase === "recovery")
+          throw new Error(
+            "Сначала заверши прерванное применение или восстанови снимок.",
+          );
+        const client = await accountClient();
+        const repo = input.create
+          ? await client.create(input.repository)
+          : await client.repository(input.repository.trim());
+        await client.initialize(repo);
+        const previous = await settings.get();
+        const sameRepo =
+          previous.repository.toLowerCase() === repo.fullName.toLowerCase();
+        await bb.storage.kv.set("review-required", true);
+        await settings.experimental_set({
+          repository: repo.fullName,
+          branch: sameRepo ? previous.branch : repo.branch,
+          path: sameRepo ? previous.path : "bb-sync.json",
+          enabled: false,
+          ...input.scope,
+        });
+        publish();
+        return publicStatus();
+      }),
+    setup_finish: (input) =>
+      edit(async () => {
+        const r = await getRuntime();
+        const preview = await r.engine.preview();
+        if (
+          input.planId !==
+          fingerprint({ target: r.key, planId: preview.planId })
+        )
+          throw new Error(
+            "Настройки или хранилище изменились. Обнови сравнение перед переносом.",
+          );
+        await r.engine.sync({ planId: preview.planId, choices: input.choices });
+        if ((await getRuntime()).key !== r.key)
+          throw new Error(
+            "Подключение изменилось во время переноса. Проверь выбранное хранилище.",
+          );
+        if (r.engine.getStatus().phase === "synced") {
+          await bb.storage.kv.set("review-required", false);
+          await settings.experimental_set({ enabled: true });
+        }
+        publish();
+        return publicStatus();
+      }),
+    options: (input) =>
+      edit(async () => {
+        const config = await settings.get();
+        const scope = {
+          appearance: input.appearance ?? config.appearance,
+          keyboard: input.keyboard ?? config.keyboard,
+          interface: input.interface ?? config.interface,
+        };
+        scopeInput.parse(scope);
+        const scopeChanged = Object.entries(scope).some(
+          ([k, value]) => config[k as keyof typeof scope] !== value,
+        );
+        if (scopeChanged && runtime?.engine.getStatus().phase === "recovery")
+          throw new Error("Сначала заверши прерванное применение.");
+        if (
+          input.enabled &&
+          !scopeChanged &&
+          ((await bb.storage.kv.get<boolean>("review-required")) === true ||
+            !(await (await getRuntime()).engine.hasBaseline()))
+        )
+          throw new Error("Сначала выполни первый перенос настроек.");
+        await settings.experimental_set({
+          ...input,
+          ...(scopeChanged ? { enabled: false } : {}),
+        });
+        if (scopeChanged) await bb.storage.kv.set("review-required", true);
+        publish();
+        return publicStatus();
+      }),
   });
   bb.cli.register({
     name: "sync",
@@ -241,7 +466,18 @@ export default async function plugin(bb: BbPluginApi) {
       }
     },
   });
-  settings.onChange(() => {
+  settings.onChange((next, previous) => {
+    const keys = [
+      "repository",
+      "branch",
+      "path",
+      "token",
+      "appearance",
+      "keyboard",
+      "interface",
+    ] as const;
+    if (keys.some((key) => next[key] !== previous[key]))
+      runtime?.controller.abort();
     publish();
   });
   bb.background.service("sync", {
@@ -254,7 +490,10 @@ export default async function plugin(bb: BbPluginApi) {
       while (!combined.aborted) {
         try {
           const config = await settings.get();
-          if (config.enabled) {
+          if (
+            config.enabled &&
+            !(await bb.storage.kv.get<boolean>("review-required"))
+          ) {
             const r = await getRuntime();
             const local = fingerprint(await r.preferences.capture());
             const observation = `${r.key}:${local}`;
@@ -292,6 +531,8 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.onDispose(async () => {
     lifecycle.abort();
+    await login.dispose();
+    await edits;
     runtime?.controller.abort();
     await runtime?.engine.drain();
   });

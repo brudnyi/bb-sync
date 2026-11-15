@@ -15,5 +15,5 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["server.ts", "app.tsx", "src", "components", "lib", "tests"]
+  "include": ["server.ts", "app.tsx", "src", "components", "lib", "tests", "ui"]
 }
