@@ -293,7 +293,7 @@ describe("additive shared plugin manifest", () => {
 });
 
 // Exercise the real merge, durable journal and inventory together as separate devices.
-import { Engine, type State } from "../src/engine";
+import { Engine, emptyState, type State } from "../src/engine";
 import type { Preferences } from "../src/preferences";
 
 function device(
@@ -422,4 +422,125 @@ describe("plugin dependencies in preferences", () => {
       expect(f.plugins[0]?.enabled).toBe(true);
     },
   );
+});
+
+describe("explicit portable sources for local plugins", () => {
+  it("exports an explicitly published local plugin without changing its installed source", async () => {
+    const f = fixture([
+      { id: "demo", enabled: false, source: "path:/private/local" },
+    ]);
+    const sync = f.create();
+    expect(await sync.capture()).toEqual({});
+    await sync.registerSources({ demo: spec });
+    expect(await sync.capture()).toEqual({
+      "plugins/demo": { ...spec, enabled: false },
+    });
+    expect(f.plugins[0]?.source).toBe("path:/private/local");
+    expect(f.start).not.toHaveBeenCalled();
+    const restarted = f.create();
+    const before = await restarted.capture();
+    expect(restarted.supports("plugins/demo")).toBe(true);
+    await restarted.apply({ "plugins/demo": spec }, before);
+    expect(f.enable).toHaveBeenCalledWith({ pluginId: "demo" });
+    expect(f.plugins[0]?.source).toBe("path:/private/local");
+  });
+  it("validates every registration before persisting any mapping", async () => {
+    const f = fixture([
+      { id: "demo", enabled: true, source: "path:/private/local" },
+    ]);
+    const sync = f.create();
+    await expect(
+      sync.registerSources({ demo: spec, absent: spec }),
+    ).rejects.toThrow("Сначала установи");
+    expect(f.saved()?.sources ?? {}).toEqual({});
+    expect(await sync.capture()).toEqual({});
+    await expect(
+      sync.registerSources({ demo: { source: "builtin:demo", enabled: true } }),
+    ).rejects.toThrow("Недопустимый");
+  });
+  it("keeps a later removal of a registered local plugin local across restarts", async () => {
+    const f = fixture([
+      { id: "demo", enabled: true, source: "path:/private/local" },
+    ]);
+    await f.create().registerSources({ demo: spec });
+    f.plugins.splice(0);
+    const restarted = f.create();
+    expect(await restarted.capture()).toEqual({ "plugins/demo": spec });
+    await restarted.apply(
+      { "plugins/demo": { ...spec, enabled: false } },
+      { "plugins/demo": spec },
+    );
+    expect(f.start).not.toHaveBeenCalled();
+    expect(await restarted.capture()).toEqual({
+      "plugins/demo": { ...spec, enabled: false },
+    });
+  });
+  it("installs the published copy on the receiving laptop and transfers later enablement", async () => {
+    const remote = repository({});
+    const a = fixture([
+      { id: "demo", enabled: true, source: "path:/private/local" },
+    ]);
+    await a.create().registerSources({ demo: spec });
+    const laptopA = device(a, remote);
+    expect((await laptopA.engine.sync()).phase).toBe("synced");
+    const b = fixture();
+    const laptopB = device(b, remote);
+    expect((await laptopB.engine.sync()).phase).toBe("synced");
+    expect(b.start).toHaveBeenCalledWith({ source });
+    a.plugins[0]!.enabled = false;
+    expect((await laptopA.engine.sync()).phase).toBe("synced");
+    expect((await laptopB.engine.sync()).phase).toBe("synced");
+    expect(b.plugins[0]?.enabled).toBe(false);
+    expect(a.plugins[0]?.source).toBe("path:/private/local");
+  });
+});
+
+describe("previously unavailable plugin shortcuts", () => {
+  it("applies shared shortcuts after installation without publishing a reset from an older baseline", async () => {
+    const f = fixture();
+    const binding = {
+      alt: false,
+      control: false,
+      key: "S",
+      meta: false,
+      mod: true,
+      shift: false,
+    };
+    const key = "keyboard/plugin%3Ademo%2Fopen-fresh/mac";
+    const config = {
+      defaultKeybindings: [],
+      keybindingOverrides: [] as unknown[],
+    };
+    const sdk = {
+      ...f.sdk,
+      system: {
+        config: async () => structuredClone(config),
+        updateKeyboardSettings: async (bindings: unknown[]) => {
+          config.keybindingOverrides = structuredClone(bindings);
+        },
+      },
+    } as unknown as Sdk;
+    const preferences = new BbPreferences(
+      sdk,
+      { appearance: false, interface: false, keyboard: true, plugins: true },
+      undefined,
+      f.create(),
+    );
+    const remote = repository({ "plugins/demo": spec, [key]: binding });
+    let persisted: State = { ...emptyState(), base: { [key]: binding } };
+    const engine = new Engine(preferences, remote, {
+      load: async () => structuredClone(persisted),
+      save: async (state) => {
+        persisted = structuredClone(state);
+      },
+    });
+    expect((await engine.sync()).phase).toBe("synced");
+    expect(remote.values[key]).toEqual(binding);
+    expect(config.keybindingOverrides).toEqual([
+      { command: "plugin:demo/open-fresh", platform: "mac", shortcut: binding },
+    ]);
+    expect(engine.getStatus().unsupported).toEqual([]);
+    expect((await engine.sync()).phase).toBe("synced");
+    expect(remote.values[key]).toEqual(binding);
+  });
 });

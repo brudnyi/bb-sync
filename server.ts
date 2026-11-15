@@ -17,7 +17,11 @@ import {
   GitHubLogin,
   repositorySchema,
 } from "./src/onboarding";
-import { PluginSync, pluginMemorySchema } from "./src/plugins";
+import {
+  PluginSync,
+  pluginMemorySchema,
+  pluginSpecSchema,
+} from "./src/plugins";
 import { BbPreferences } from "./src/preferences";
 
 const publicSchema = z.object({
@@ -62,6 +66,18 @@ export type SetupState = z.infer<typeof setupSchema>;
 export type PublicStatus = z.infer<typeof publicSchema>;
 export const rpcContract = defineRpcContract({
   status: { input: z.null(), output: publicSchema },
+  register_plugin_sources: {
+    input: z
+      .object({
+        sources: z
+          .record(z.string(), pluginSpecSchema)
+          .refine(
+            (v) => Object.keys(v).length > 0 && Object.keys(v).length <= 100,
+          ),
+      })
+      .strict(),
+    output: publicSchema,
+  },
   sync: { input: z.null(), output: publicSchema },
   resolve: {
     input: z
@@ -158,6 +174,7 @@ export default async function plugin(bb: BbPluginApi) {
   type Runtime = {
     engine: Engine;
     preferences: BbPreferences;
+    pluginSync: PluginSync | undefined;
     controller: AbortController;
     key: string;
   };
@@ -267,7 +284,7 @@ export default async function plugin(bb: BbPluginApi) {
         publish,
       );
       await engine.initialize();
-      runtime = { engine, preferences, controller, key };
+      runtime = { engine, preferences, pluginSync, controller, key };
       return runtime;
     })();
     try {
@@ -371,6 +388,22 @@ export default async function plugin(bb: BbPluginApi) {
   }
   bb.rpc.register(rpcContract, {
     status: publicStatus,
+    register_plugin_sources: ({ sources }) =>
+      edit(async () => {
+        const r = await getRuntime();
+        if (!r.pluginSync) throw new Error("Сначала включи группу «Плагины».");
+        if (
+          operation ||
+          ["syncing", "recovery"].includes(r.engine.getStatus().phase)
+        )
+          throw new Error(
+            "Дождись завершения текущего переноса перед сменой источников.",
+          );
+        const inventory = r.pluginSync;
+        await r.engine.configure(() => inventory.registerSources(sources));
+        publish();
+        return publicStatus();
+      }),
     sync: () => launch(() => sync()),
     resolve: (input) => launch(() => sync(input)),
     restore: () => launch(restore),

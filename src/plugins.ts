@@ -59,6 +59,7 @@ export function pluginId(key: string): string | null {
 export const pluginMemorySchema = z.object({
   known: z.record(z.string(), pluginSpecSchema),
   jobs: z.record(z.string(), z.string()),
+  sources: z.record(z.string(), pluginSpecSchema).default({}),
 });
 export type PluginMemory = z.infer<typeof pluginMemorySchema>;
 export interface PluginMemoryStore {
@@ -72,6 +73,7 @@ export class PluginSync {
   private memory: Promise<PluginMemory> | undefined;
   private writes: Promise<void> = Promise.resolve();
   private installed = new Map<string, Installed>();
+  private registered = new Set<string>();
   constructor(
     private sdk: Sdk,
     private store: PluginMemoryStore,
@@ -97,7 +99,9 @@ export class PluginSync {
     const id = pluginId(key);
     return (
       id !== null &&
-      (!this.installed.get(id) || this.isPortable(this.installed.get(id)!))
+      (!this.installed.get(id) ||
+        this.isPortable(this.installed.get(id)!) ||
+        this.registered.has(id))
     );
   }
   private isPortable(p: Installed) {
@@ -149,12 +153,18 @@ export class PluginSync {
     const { plugins } = await this.sdk.plugins.list({ signal: this.signal });
     this.installed = new Map(plugins.map((p) => [p.id, p]));
     const memory = await this.loadMemory();
+    this.registered = new Set(Object.keys(memory.sources));
     const previous = structuredClone(memory.known);
     const result: Snapshot = {};
     for (const p of plugins) {
-      if (!pluginId(`plugins/${p.id}`) || !this.isPortable(p)) continue;
-      const spec = memory.known[p.id]
-        ? { ...memory.known[p.id]!, enabled: p.enabled }
+      if (
+        !pluginId(`plugins/${p.id}`) ||
+        (!this.isPortable(p) && !this.registered.has(p.id))
+      )
+        continue;
+      const remembered = memory.sources[p.id] ?? memory.known[p.id];
+      const spec = remembered
+        ? { ...remembered, enabled: p.enabled }
         : await this.spec(p);
       if (spec) memory.known[p.id] = spec;
     }
@@ -162,6 +172,28 @@ export class PluginSync {
       if (this.supports(`plugins/${id}`)) result[`plugins/${id}`] = spec;
     if (!equal(previous, memory.known)) await this.save(memory);
     return result;
+  }
+  async registerSources(sources: Record<string, PluginSpec>): Promise<void> {
+    await this.capture();
+    const memory = await this.loadMemory();
+    const entries = Object.entries(sources).map(([id, value]) => {
+      const spec = pluginSpecSchema.parse(value);
+      if (!pluginId(`plugins/${id}`) || spec.source.startsWith("builtin:"))
+        throw new Error(`Недопустимый переносимый источник для ${id}.`);
+      const local = this.installed.get(id);
+      if (!local?.source.startsWith("path:"))
+        throw new Error(`Сначала установи локальный плагин ${id}.`);
+      return [id, { ...spec, enabled: local.enabled }] as const;
+    });
+    // Validate the entire request before changing the durable inventory.
+    const next = structuredClone(memory);
+    for (const [id, spec] of entries) {
+      next.sources[id] = spec;
+      next.known[id] = spec;
+    }
+    await this.save(next);
+    Object.assign(memory, next);
+    this.registered = new Set(Object.keys(memory.sources));
   }
   async prepare(target: Snapshot): Promise<boolean> {
     const memory = await this.loadMemory();
@@ -269,6 +301,8 @@ export class PluginSync {
         if (spec.enabled) await this.sdk.plugins.enable({ pluginId: id });
         else await this.sdk.plugins.disable({ pluginId: id });
       }
+      if (memory.sources[id] && !equal(memory.sources[id], spec))
+        memory.sources[id] = spec;
       if (!equal(memory.known[id], spec)) {
         memory.known[id] = spec;
         await this.save(memory);

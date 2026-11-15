@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-bb-sync",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "engines": {
     "bb": ">=0.49",

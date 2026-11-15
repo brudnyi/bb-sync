@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { equal, type Snapshot } from "./model";
-import { type PluginSync, pluginId, pluginSpecSchema } from "./plugins";
+import type { PluginSync } from "./plugins";
 
 type Sdk = BbPluginApi["sdk"];
 type Bindings = Parameters<Sdk["system"]["updateKeyboardSettings"]>[0];
@@ -76,7 +76,6 @@ function bindingIdentity(key: string) {
   };
 }
 export interface Preferences {
-  observe?(remote: Snapshot): void;
   capture(): Promise<Snapshot>;
   supports(key: string): boolean;
   prepare(target: Snapshot): Promise<void>;
@@ -85,20 +84,6 @@ export interface Preferences {
 export class BbPreferences implements Preferences {
   private commands = new Set<string>();
   private plugins = new Set<string>();
-  private plannedPlugins = new Set<string>();
-  observe(remote: Snapshot): void {
-    this.plannedPlugins = new Set(
-      Object.entries(remote).flatMap(([key, value]) => {
-        const id = pluginId(key);
-        return this.scope.plugins &&
-          id &&
-          this.pluginSync?.supports(key) &&
-          pluginSpecSchema.safeParse(value).success
-          ? [id]
-          : [];
-      }),
-    );
-  }
   constructor(
     private sdk: Sdk,
     private scope: Scope,
@@ -123,10 +108,7 @@ export class BbPreferences implements Preferences {
     if (!binding || !this.scope.keyboard) return false;
     if (this.commands.has(binding.command)) return true;
     const plugin = /^plugin:([^/]+)\/.+/.exec(binding.command)?.[1];
-    return (
-      plugin !== undefined &&
-      (this.plugins.has(plugin) || this.plannedPlugins.has(plugin))
-    );
+    return plugin !== undefined && this.plugins.has(plugin);
   }
   async capture(): Promise<Snapshot> {
     this.signal?.throwIfAborted();

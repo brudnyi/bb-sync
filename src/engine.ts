@@ -103,6 +103,14 @@ export class Engine {
   getStatus(): SyncStatus {
     return structuredClone(this.status);
   }
+  configure(task: () => Promise<void>): Promise<void> {
+    return this.exclusive(async () => {
+      const state = await this.store.load();
+      if (state?.journal)
+        throw new Error("Сначала заверши прерванное применение.");
+      await task();
+    });
+  }
   async drain(): Promise<void> {
     await this.queue;
   }
@@ -126,7 +134,6 @@ export class Engine {
         "Файл настроек удалён из GitHub. Восстановите его из истории репозитория.",
       );
     const local = await this.preferences.capture();
-    this.preferences.observe?.(remote.settings);
     const base = state.base;
     // Preserve settings owned by a newer plugin or disabled scope verbatim.
     const projectedLocal: Snapshot = { ...local };
@@ -327,7 +334,9 @@ export class Engine {
             backupAt: state.backup?.createdAt ?? null,
             planId: null,
             conflicts: [],
-            unsupported: unsupported.slice(0, 100),
+            unsupported: unsupported
+              .filter((key) => !this.preferences.supports(key))
+              .slice(0, 100),
           });
           return this.getStatus();
         }
